@@ -1,4 +1,7 @@
 import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 export default async function handler(req, res) {
   // 1. Handle the GET request for Facebook Webhook Verification
