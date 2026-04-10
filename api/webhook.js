@@ -15,6 +15,20 @@ function getHeader(req, name) {
   return req.headers?.[name] || req.headers?.[name.toLowerCase()] || req.headers?.[name.toUpperCase()];
 }
 
+function maskSecret(value) {
+  if (!value) return '(missing)';
+  if (value.length <= 8) return '***';
+  return `${value.slice(0, 4)}...${value.slice(-4)} (len=${value.length})`;
+}
+
+function getHubQueryParams(req) {
+  const query = req.query || {};
+  const mode = query['hub.mode'] || query?.hub?.mode || query.mode;
+  const token = query['hub.verify_token'] || query?.hub?.verify_token || query.verify_token;
+  const challenge = query['hub.challenge'] || query?.hub?.challenge || query.challenge;
+  return { mode, token, challenge };
+}
+
 async function getRawBodyBuffer(req) {
   if (Buffer.isBuffer(req.rawBody)) {
     return req.rawBody;
@@ -69,81 +83,132 @@ function verifyRequestSignature(req, rawBodyBuffer) {
 }
 
 export default async function handler(req, res) {
-  // 1. Handle GET: Webhook Verification
-  if (req.method === 'GET') {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
+  try {
+    const requestId = getHeader(req, 'x-request-id') || `${Date.now()}`;
+    console.log('[Webhook] Incoming request', {
+      requestId,
+      method: req.method,
+      url: req.url,
+      hasQuery: !!req.query,
+      queryKeys: Object.keys(req.query || {}),
+      hasVerifyTokenEnv: !!process.env.VERIFY_TOKEN,
+      hasPageAccessTokenEnv: !!process.env.PAGE_ACCESS_TOKEN,
+      hasAppSecretEnv: !!process.env.APP_SECRET,
+    });
 
-    if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN && challenge) {
-      console.log('WEBHOOK_VERIFIED');
-      return res.status(200).send(challenge);
-    } else {
-      console.error('VERIFICATION_FAILED');
-      return res.status(403).end();
-    }
-  }
+    // 1. Handle GET: Webhook Verification
+    if (req.method === 'GET') {
+      const { mode, token, challenge } = getHubQueryParams(req);
 
-  // 2. Handle POST: Event Notifications
-  if (req.method === 'POST') {
-    const rawBodyBuffer = await getRawBodyBuffer(req);
-
-    // Validate signed payloads when APP_SECRET is configured.
-    if (process.env.APP_SECRET) {
-      if (!verifyRequestSignature(req, rawBodyBuffer)) {
-        return res.status(401).send('Signature verification failed');
-      }
-    }
-
-    let body = req.body;
-    if (!body || typeof body === 'string' || Buffer.isBuffer(body)) {
-      try {
-        body = JSON.parse(rawBodyBuffer.toString('utf8'));
-      } catch {
-        return res.status(400).send('Invalid JSON payload');
-      }
-    }
-
-    if (body.object === 'page') {
-      body.entry?.forEach(entry => {
-        // Entries can contain multiple messages
-        if (entry.messaging) {
-          entry.messaging.forEach(webhook_event => {
-            const sender_psid = webhook_event?.sender?.id;
-            if (!sender_psid) {
-              return;
-            }
-
-            if (webhook_event.message) {
-              if (webhook_event.message.attachments) {
-                handleAttachment(sender_psid, webhook_event.message.attachments[0]).catch((error) => {
-                  console.error('Attachment handling error:', error);
-                });
-              } else if (webhook_event.message.text) {
-                handleMessage(sender_psid, webhook_event.message.text).catch((error) => {
-                  console.error('Message handling error:', error);
-                });
-              }
-            } else if (webhook_event.postback?.payload) {
-              handlePostback(sender_psid, webhook_event.postback.payload).catch((error) => {
-                console.error('Postback handling error:', error);
-              });
-            } else if (webhook_event.read || webhook_event.delivery || webhook_event.reaction) {
-              // Acknowledge non-message webhooks silently.
-              console.log('Received non-message webhook event.');
-            }
-          });
-        }
+      console.log('[Webhook][GET] Verification params', {
+        mode,
+        tokenPreview: maskSecret(token),
+        expectedTokenPreview: maskSecret(process.env.VERIFY_TOKEN),
+        challengePreview: challenge ? String(challenge).slice(0, 12) : '(missing)',
       });
 
-      // Meta requires a 200 OK within 5 seconds
-      return res.status(200).send('EVENT_RECEIVED');
-    } else {
+      if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN && challenge) {
+        console.log('[Webhook][GET] WEBHOOK_VERIFIED');
+        return res.status(200).send(challenge);
+      }
+
+      console.error('[Webhook][GET] VERIFICATION_FAILED', {
+        modeMatches: mode === 'subscribe',
+        tokenMatches: token === process.env.VERIFY_TOKEN,
+        hasChallenge: !!challenge,
+      });
+      return res.status(403).send('Verification failed');
+    }
+
+    // 2. Handle POST: Event Notifications
+    if (req.method === 'POST') {
+      const rawBodyBuffer = await getRawBodyBuffer(req);
+      console.log('[Webhook][POST] Body received', {
+        bytes: rawBodyBuffer.length,
+        hasSignatureHeader: !!getHeader(req, 'x-hub-signature-256'),
+      });
+
+      // Validate signed payloads when APP_SECRET is configured.
+      if (process.env.APP_SECRET) {
+        const isValidSignature = verifyRequestSignature(req, rawBodyBuffer);
+        console.log('[Webhook][POST] Signature validation result', { isValidSignature });
+        if (!isValidSignature) {
+          return res.status(401).send('Signature verification failed');
+        }
+      } else {
+        console.warn('[Webhook][POST] APP_SECRET missing; signature validation skipped.');
+      }
+
+      let body = req.body;
+      if (!body || typeof body === 'string' || Buffer.isBuffer(body)) {
+        try {
+          body = JSON.parse(rawBodyBuffer.toString('utf8'));
+        } catch (error) {
+          console.error('[Webhook][POST] Invalid JSON payload', { error: error.message });
+          return res.status(400).send('Invalid JSON payload');
+        }
+      }
+
+      console.log('[Webhook][POST] Parsed body summary', {
+        object: body?.object,
+        entryCount: Array.isArray(body?.entry) ? body.entry.length : 0,
+      });
+
+      if (body.object === 'page') {
+        body.entry?.forEach((entry, entryIndex) => {
+          if (entry.messaging) {
+            entry.messaging.forEach((webhook_event, eventIndex) => {
+              const sender_psid = webhook_event?.sender?.id;
+              console.log('[Webhook][POST] Event summary', {
+                entryIndex,
+                eventIndex,
+                senderPreview: maskSecret(sender_psid),
+                hasMessage: !!webhook_event?.message,
+                hasPostback: !!webhook_event?.postback,
+                hasDelivery: !!webhook_event?.delivery,
+                hasRead: !!webhook_event?.read,
+                hasReaction: !!webhook_event?.reaction,
+              });
+
+              if (!sender_psid) {
+                return;
+              }
+
+              if (webhook_event.message) {
+                if (webhook_event.message.attachments) {
+                  handleAttachment(sender_psid, webhook_event.message.attachments[0]).catch((error) => {
+                    console.error('Attachment handling error:', error);
+                  });
+                } else if (webhook_event.message.text) {
+                  handleMessage(sender_psid, webhook_event.message.text).catch((error) => {
+                    console.error('Message handling error:', error);
+                  });
+                }
+              } else if (webhook_event.postback?.payload) {
+                handlePostback(sender_psid, webhook_event.postback.payload).catch((error) => {
+                  console.error('Postback handling error:', error);
+                });
+              }
+            });
+          }
+        });
+
+        // Meta requires a 200 OK within 5 seconds
+        return res.status(200).send('EVENT_RECEIVED');
+      }
+
+      console.warn('[Webhook][POST] Non-page object ignored', { object: body?.object });
       return res.status(404).end();
     }
-  }
 
-  return res.status(405).end(); // Method Not Allowed
+    return res.status(405).end(); // Method Not Allowed
+  } catch (error) {
+    console.error('[Webhook] Unhandled error', {
+      message: error?.message,
+      stack: error?.stack,
+    });
+    return res.status(500).send('Internal Server Error');
+  }
 }
 
 async function handleAttachment(psid, attachment) {
