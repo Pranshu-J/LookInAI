@@ -1,0 +1,14 @@
+{
+  "name": "lookinai",
+  "version": "1.0.0",
+  "description": "Facebook Messenger bot for LookInAI",
+  "main": "api/webhook.js",
+  "scripts": {
+    "start": "node api/webhook.js",
+    "dev": "vercel dev"
+  },
+  "type": "module",
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
