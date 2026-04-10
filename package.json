@@ -1,14 +1,14 @@
 {
   "name": "lookinai",
   "version": "1.0.0",
-  "description": "Facebook Messenger bot for LookInAI",
-  "main": "api/webhook.js",
+  "description": "Telegram bot webhook server for Vercel",
+  "main": "api/bot.js",
   "scripts": {
-    "start": "node api/webhook.js",
-    "dev": "vercel dev"
+    "dev": "vercel dev",
+    "set:webhook": "node scripts/set-webhook.js"
   },
-  "type": "module",
   "dependencies": {
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3"
   }
 }

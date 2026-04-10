@@ -1,63 +1,95 @@
-# LookInAI Messenger Webhook
+# LookInAI Telegram Webhook (Vercel)
 
-Vercel-hosted Facebook Messenger webhook endpoint with:
+Serverless Telegram bot webhook built for Vercel using `telegraf`.
 
-- `GET /api/webhook` for Meta callback URL verification
-- `POST /api/webhook` for signed webhook events
+## What This Project Does
+
+- Receives Telegram webhook updates at `POST /api/bot`
+- Replies to any incoming text message
+- Runs as a Vercel Serverless Function (no always-on process required)
+
+## Project Structure
+
+```text
+api/
+  bot.js
+scripts/
+  set-webhook.js
+```
 
 ## Environment Variables
 
 Set these in Vercel Project Settings -> Environment Variables:
 
-- `VERIFY_TOKEN` (must match the token entered in Meta Webhooks config)
-- `PAGE_ACCESS_TOKEN` (used for optional message replies)
-- `APP_SECRET` (used to validate `x-hub-signature-256`)
+- `BOT_TOKEN` (required): Telegram bot token from BotFather
+- `WEBHOOK_URL` (optional but recommended): full webhook URL like `https://your-app.vercel.app/api/bot`
+- `TELEGRAM_WEBHOOK_SECRET` (optional): extra webhook verification token
 
-This project also supports lowercase aliases:
-
-- `verify_token`
-- `page_access_token`
-- `app_secret`
+For local development, create a `.env` file from `.env.example`.
 
 ## Local Development
 
-1. Copy `.env.example` to `.env` and fill values.
-2. Install dependencies:
+1. Install dependencies:
 
 ```bash
 npm install
 ```
 
-3. Start local server with Vercel:
+2. Add your token to `.env`:
+
+```bash
+BOT_TOKEN=123456:your_real_bot_token_here
+```
+
+3. Start local Vercel dev server:
 
 ```bash
 npm run dev
 ```
 
-## Meta Webhook Setup
+## Deploy To Vercel
 
-1. Deploy to Vercel.
-2. In Meta app Webhooks settings:
-	- Callback URL: `https://<your-vercel-domain>/api/webhook`
-	- Verify Token: exactly the same value as `VERIFY_TOKEN`
-3. Subscribe the page to events.
+1. Push this repository to GitHub.
+2. Import the repo in Vercel.
+3. Add environment variables in Vercel.
+4. Deploy.
 
-If verification succeeds, Meta receives your `hub.challenge` as plain text with HTTP 200.
+After deploy, your webhook endpoint is:
 
-## Troubleshooting Verification Failure
+`https://<your-domain>.vercel.app/api/bot`
 
-If Meta shows "The callback URL or verify token couldn't be validated":
+## Register Telegram Webhook
 
-1. Confirm Callback URL is exactly `https://<your-domain>/api/webhook`.
-2. Confirm Verify Token in Meta dashboard exactly equals `VERIFY_TOKEN` in Vercel.
-3. Ensure env vars are set in the same Vercel environment you deployed (Production/Preview).
-4. Redeploy after changing env vars.
-5. Check Vercel function logs for `Webhook verification failed` details.
+You only need to register the webhook when your URL changes.
 
-You can also test manually:
+### Option A: Browser URL (manual)
 
-```bash
-curl "https://<your-domain>/api/webhook?hub.mode=subscribe&hub.verify_token=<your-token>&hub.challenge=123456"
+Open this URL in a browser:
+
+`https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://<YOUR_DOMAIN>.vercel.app/api/bot`
+
+Expected success response:
+
+```json
+{"ok":true,"result":true,"description":"Webhook was set"}
 ```
 
-Expected response body: `123456`
+### Option B: Script (recommended)
+
+Set these env vars locally:
+
+- `BOT_TOKEN`
+- `WEBHOOK_URL`
+- `TELEGRAM_WEBHOOK_SECRET` (optional)
+
+Then run:
+
+```bash
+npm run set:webhook
+```
+
+## Test
+
+1. Send your bot a message in Telegram.
+2. Check Vercel Function logs if needed.
+3. The bot should reply: `Hello! This is my Vercel-hosted Telegram bot.`
