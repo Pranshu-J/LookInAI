@@ -43,3 +43,21 @@ npm run dev
 3. Subscribe the page to events.
 
 If verification succeeds, Meta receives your `hub.challenge` as plain text with HTTP 200.
+
+## Troubleshooting Verification Failure
+
+If Meta shows "The callback URL or verify token couldn't be validated":
+
+1. Confirm Callback URL is exactly `https://<your-domain>/api/webhook`.
+2. Confirm Verify Token in Meta dashboard exactly equals `VERIFY_TOKEN` in Vercel.
+3. Ensure env vars are set in the same Vercel environment you deployed (Production/Preview).
+4. Redeploy after changing env vars.
+5. Check Vercel function logs for `Webhook verification failed` details.
+
+You can also test manually:
+
+```bash
+curl "https://<your-domain>/api/webhook?hub.mode=subscribe&hub.verify_token=<your-token>&hub.challenge=123456"
+```
+
+Expected response body: `123456`

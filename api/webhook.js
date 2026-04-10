@@ -23,10 +23,35 @@ function getHeader(req, headerName) {
 
 function getVerificationParams(req) {
   const query = req.query || {};
+  const hub = query.hub || {};
+  const pick = (...values) => values.find((value) => value !== undefined && value !== null && value !== '');
+  const normalize = (value) => (Array.isArray(value) ? value[0] : value);
+
   return {
-    mode: query['hub.mode'] || query.mode,
-    token: query['hub.verify_token'] || query.verify_token,
-    challenge: query['hub.challenge'] || query.challenge,
+    mode: normalize(
+      pick(
+        query['hub.mode'],
+        query.hub_mode,
+        query.mode,
+        hub.mode,
+      )
+    ),
+    token: normalize(
+      pick(
+        query['hub.verify_token'],
+        query.hub_verify_token,
+        query.verify_token,
+        hub.verify_token,
+      )
+    ),
+    challenge: normalize(
+      pick(
+        query['hub.challenge'],
+        query.hub_challenge,
+        query.challenge,
+        hub.challenge,
+      )
+    ),
   };
 }
 
@@ -104,6 +129,13 @@ export default async function handler(req, res) {
     if (mode === 'subscribe' && token === verifyToken && challenge) {
       return res.status(200).send(challenge);
     }
+
+    console.error('Webhook verification failed', {
+      mode,
+      hasChallenge: Boolean(challenge),
+      tokenMatched: token === verifyToken,
+      query: req.query,
+    });
 
     return res.status(403).send('Verification failed');
   }
